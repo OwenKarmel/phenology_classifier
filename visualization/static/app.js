@@ -438,6 +438,7 @@ class Zoomer {
     this.box.classList.toggle("zoomed", s > 1.001);
     this.level.textContent = `${s < 10 ? (Math.round(s * 10) / 10) : Math.round(s)}×`;
     this.maybeHires(fw);
+    this.onApply?.(); // the Annotate tab redraws its boxes
   }
 
   zoomAt(x, y, factor) {
@@ -475,7 +476,7 @@ class Zoomer {
     if (previewW) this.previewW = previewW;
     if (!keep) { this.s = 1; this.tx = 0; this.ty = 0; this.img.style.transform = ""; this.box.classList.remove("zoomed"); this.level.textContent = "1×"; }
   }
-  loaded() { this.apply(); }
+  loaded() { this.apply(); this.onLoad?.(); }
 
   maybeHires(fw) {
     if (!this.path || this.hires) return;
@@ -507,6 +508,7 @@ function renderTrail() {
   const c = S.cam, f = frame();
   $("trailCaption").textContent = c && f ? `${S.field.id.replace(/_/g, " ")} · ${c.label} · ${fmtDay(f.date, true)} ${fmtHM(f.min)}  —  ← → frame, Shift+← → day, Esc to exit` : "";
   const full = $("trailFull");
+  $("trailAnnotate").toggleAttribute("disabled", !f);
   if (!c) {
     $("trailTitle").textContent = S.field.id.replace(/_/g, " ");
     setImage("trailBox", "trailImg", null, "This field has no Across trailcam images.");
@@ -940,8 +942,30 @@ function showTip(e, content) {
 }
 function hideTip() { $("tooltip").hidden = true; }
 
+// ------------------------------------------------------------------ tabs
+let TAB = "viewer";
+const SUBTITLES = {
+  viewer: "Across trailcams beside mobile phone photos, matched by date and time of day · 2025",
+  annotate: "Draw boxes around grape clusters on trailcam frames · saved as a YOLO dataset in annotated_images/",
+};
+
+// `path`: a trailcam frame to open in the Annotate tab.
+function setTab(name, path) {
+  TAB = name;
+  $("viewerMain").hidden = name !== "viewer";
+  $("annotateMain").hidden = name !== "annotate";
+  document.querySelectorAll(".viewer-only").forEach((n) => { n.hidden = name !== "viewer"; });
+  document.querySelectorAll(".tabs [role=tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  $("subtitle").textContent = SUBTITLES[name];
+  hideTip();
+  if (document.fullscreenElement) document.exitFullscreen();
+  if (name === "viewer") writeHash();
+  else Annot.show(path);
+}
+
 // ----------------------------------------------------------- url + misc
 function writeHash() {
+  if (TAB !== "viewer") return;
   const p = photo(), f = frame();
   const q = new URLSearchParams();
   q.set("field", S.field.id);
@@ -996,7 +1020,10 @@ function bind() {
   });
   ZOOM.trailBox = new Zoomer($("trailBox"), $("trailImg"));
   ZOOM.phoneBox = new Zoomer($("phoneBox"), $("phoneImg"));
+  document.querySelectorAll(".tabs [role=tab]").forEach((b) => { b.onclick = () => setTab(b.dataset.tab); });
+  $("trailAnnotate").onclick = () => { const f = frame(); if (f) setTab("annotate", f.path); };
   document.addEventListener("keydown", (e) => {
+    if (TAB !== "viewer") return;
     if (e.target.closest("select, input, textarea") || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     if (k === "ArrowLeft" || k === "ArrowRight") {
@@ -1025,10 +1052,15 @@ async function init() {
     return;
   }
   FIELDS = prepare(IDX);
-  if (!readHash()) {
-    const first = FIELDS.find((f) => f.cameras.length && f.photos.length) || FIELDS[0];
-    selectField(first.id);
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (q.get("tab") === "annotate") {
+    selectField(defaultField().id);
+    setTab("annotate", q.get("src"));
+  } else if (!readHash()) {
+    selectField(defaultField().id);
   }
 }
+
+const defaultField = () => FIELDS.find((f) => f.cameras.length && f.photos.length) || FIELDS.find((f) => f.cameras.length) || FIELDS[0];
 
 init();

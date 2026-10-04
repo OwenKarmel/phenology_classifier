@@ -10,15 +10,19 @@
 <header class="topbar">
   <div>
     <h1>Phenology Image Viewer</h1>
-    <p class="sub">Across trailcams beside mobile phone photos, matched by date and time of day · 2025</p>
+    <p class="sub" id="subtitle">Across trailcams beside mobile phone photos, matched by date and time of day · 2025</p>
   </div>
-  <div class="toggles">
+  <nav class="tabs" role="tablist" aria-label="Mode">
+    <button role="tab" data-tab="viewer" aria-selected="true" aria-controls="viewerMain">Viewer</button>
+    <button role="tab" data-tab="annotate" aria-selected="false" aria-controls="annotateMain">Annotate</button>
+  </nav>
+  <div class="toggles viewer-only">
     <label><input type="checkbox" id="skipNight" checked> Skip night frames</label>
     <label><input type="checkbox" id="taggedOnly"> Only phone photos tagged to this camera</label>
   </div>
 </header>
 
-<main>
+<main id="viewerMain">
   <section class="card" id="overviewCard">
     <div class="card-head">
       <h2>All fields</h2>
@@ -46,7 +50,10 @@
           <span class="pane-kind">Trailcam · Across</span>
           <strong id="trailTitle">—</strong>
         </div>
-        <a id="trailFull" class="ext" target="_blank" rel="noopener">Full size ↗</a>
+        <span class="head-links">
+          <button type="button" id="trailAnnotate" class="ext" title="Draw grape-cluster boxes on this frame">Annotate</button>
+          <a id="trailFull" class="ext" target="_blank" rel="noopener">Full size ↗</a>
+        </span>
       </div>
       <div class="imgbox" id="trailBox" tabindex="0"><img id="trailImg" alt="" draggable="false"><div class="empty"></div><div class="spinner"></div><div class="fs-caption" id="trailCaption"></div></div>
       <div class="notice" id="trailNotice" hidden></div>
@@ -90,7 +97,112 @@
   <p class="keys muted">Zoom: scroll or pinch on a photo, drag to pan, double-click to zoom/fit, 1:1 for actual pixels, the corner-brackets button (or f) for full screen (arrow keys still work there). Keys: ← → frame · Shift+← → same time on adjacent day · , . phone photo · [ ] phone visit. Times are local (EDT). Dashed markers and “~” are approximate dates (red in the spreadsheet).</p>
 </main>
 
+<main id="annotateMain" hidden>
+  <section class="card ann-bar">
+    <div class="ann-group">
+      <label for="annField" class="visually-hidden">Field</label>
+      <select id="annField" class="field-select"></select>
+      <div class="cam-picker" role="radiogroup" aria-label="Camera" id="annCams"></div>
+      <div class="cam-picker" role="radiogroup" aria-label="View" id="annViews"></div>
+    </div>
+    <div class="ann-group">
+      <span class="muted">A / D steps through</span>
+      <div class="seg" role="radiogroup" aria-label="Frames to step through" id="annFilter"></div>
+      <label class="check"><input type="checkbox" id="annDay" checked> Daytime only</label>
+    </div>
+  </section>
+
+  <div class="ann-layout">
+    <article class="pane">
+      <div class="pane-head">
+        <div>
+          <span class="pane-kind" id="annKind">Trailcam</span>
+          <strong id="annTitle">—</strong>
+        </div>
+        <a id="annFull" class="ext" target="_blank" rel="noopener">Full size ↗</a>
+      </div>
+      <div class="imgbox annbox" id="annBox" tabindex="0">
+        <img id="annImg" alt="" draggable="false">
+        <svg id="annSvg" class="ann-overlay" aria-hidden="true"></svg>
+        <div class="empty"></div><div class="spinner"></div><div class="fs-caption" id="annCaption"></div>
+        <div class="anntools" id="annTools">
+          <button type="button" data-tool="rect" title="Draw boxes (R)" aria-pressed="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1"/></svg></button>
+          <button type="button" data-tool="pan" title="Pan (H, or hold Space)" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 8V3.5a1 1 0 0 1 2 0V7m0-4.5v-.5a1 1 0 0 1 2 0V7m0-4a1 1 0 0 1 2 0V8m0-3a1 1 0 0 1 2 0v4.5c0 2.8-2 5-4.7 5-1.8 0-3-.8-4-2.3L2.6 9.4a1 1 0 0 1 1.6-1.2L5.5 9.7"/></svg></button>
+          <button type="button" id="annHideAll" title="Hide boxes (Ctrl+H)" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg></button>
+        </div>
+        <div class="ann-toast" id="annToast" role="status" aria-live="polite"></div>
+      </div>
+      <div class="ann-nav">
+        <button type="button" id="annPrev" title="Previous frame (A or ←) · Shift+A: previous unlabeled">‹ A</button>
+        <div class="scrub">
+          <canvas id="annScrub" aria-label="Frames of this camera view, colored by status. Click to jump."></canvas>
+          <div class="scrub-axis" id="annAxis"></div>
+        </div>
+        <button type="button" id="annNext" title="Next frame (D or →) · Shift+D: next unlabeled">D ›</button>
+      </div>
+      <div class="ann-legend" id="annLegend"></div>
+    </article>
+
+    <aside class="pane ann-side">
+      <section>
+        <div class="ann-status"><span class="pill" id="annPill"></span><span class="muted" id="annSave"></span></div>
+        <div class="ann-actions">
+          <button type="button" id="annReset" title="Remove this frame's boxes and status (Ctrl+Z undoes)">Reset</button>
+          <button type="button" id="annSkip" title="Leave this frame out of the dataset and go to the next (Ctrl+Space)">Skip</button>
+          <button type="button" id="annSubmit" class="primary" title="Save this frame, with or without boxes, and go to the next (Ctrl+Enter)">Submit ›</button>
+        </div>
+        <p class="hint" id="annHint"></p>
+      </section>
+
+      <section>
+        <h3>Labels</h3>
+        <div class="labels" id="annLabels"></div>
+        <button type="button" class="linkish" id="annAddLabel">+ Add label</button>
+      </section>
+
+      <section>
+        <h3>Regions <span class="muted" id="annRegCount"></span></h3>
+        <ol class="regions" id="annRegions"></ol>
+        <div class="ann-actions">
+          <button type="button" id="annCopyPrev" title="Add the boxes of the nearest earlier labeled frame of this camera view (C)">Copy previous frame's boxes</button>
+          <button type="button" id="annDeleteAll" title="Delete every box on this frame (Ctrl+Backspace)">Delete all</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>Dataset</h3>
+        <div class="progress" id="annProgress"></div>
+      </section>
+
+      <details class="hotkeys">
+        <summary>Keyboard shortcuts</summary>
+        <dl>
+          <dt><kbd>A</kbd> <kbd>D</kbd></dt><dd>Previous / next frame (also <kbd>←</kbd> <kbd>→</kbd>)</dd>
+          <dt><kbd>Shift</kbd>+<kbd>A</kbd> <kbd>D</kbd></dt><dd>Previous / next unlabeled frame</dd>
+          <dt><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></dt><dd>Same time, previous / next day</dd>
+          <dt>Drag</dt><dd>Draw a box. Click a box to select it, then drag it or its handles</dd>
+          <dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>Choose a label (or relabel the selected box)</dd>
+          <dt><kbd>Backspace</kbd></dt><dd>Delete the selected box (<kbd>Ctrl</kbd>+<kbd>Backspace</kbd>: all)</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>Submit and go to the next frame</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>Space</kbd></dt><dd>Skip and go to the next frame</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>Undo (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo)</dd>
+          <dt><kbd>C</kbd></dt><dd>Copy the previous labeled frame's boxes</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>C</kbd> <kbd>V</kbd></dt><dd>Copy the selected box (or all) / paste</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>Duplicate the selected box</dd>
+          <dt><kbd>Alt</kbd>+<kbd>.</kbd></dt><dd>Select the next box</dd>
+          <dt><kbd>Esc</kbd> or <kbd>U</kbd></dt><dd>Unselect</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>H</kbd></dt><dd>Hide all boxes (<kbd>Alt</kbd>+<kbd>H</kbd>: the selected one)</dd>
+          <dt><kbd>R</kbd> <kbd>H</kbd></dt><dd>Draw tool / pan tool (or hold <kbd>Space</kbd>, or middle-drag)</dd>
+          <dt>Scroll</dt><dd>Zoom (<kbd>+</kbd> <kbd>−</kbd>; <kbd>Shift</kbd>+<kbd>1</kbd> fit, <kbd>Shift</kbd>+<kbd>2</kbd> 100%)</dd>
+          <dt><kbd>F</kbd></dt><dd>Full screen</dd>
+        </dl>
+      </details>
+    </aside>
+  </div>
+</main>
+
 <div class="tooltip" id="tooltip" hidden></div>
 <script src="app.js"></script>
+<script src="annotate.js"></script>
 </body>
 </html>
