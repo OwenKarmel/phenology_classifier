@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phenology Image Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>Phenology Image Viewer</h1>
+    <p class="sub">Across trailcams beside mobile phone photos, matched by date and time of day · 2025</p>
+  </div>
+  <div class="toggles">
+    <label><input type="checkbox" id="skipNight" checked> Skip night frames</label>
+    <label><input type="checkbox" id="taggedOnly"> Only phone photos tagged to this camera</label>
+  </div>
+</header>
+
+<main>
+  <section class="card" id="overviewCard">
+    <div class="card-head">
+      <h2>All fields</h2>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div id="overview" class="chart"></div>
+  </section>
+
+  <section class="card" id="fieldCard">
+    <div class="card-head">
+      <div class="field-title">
+        <label for="fieldSelect" class="visually-hidden">Field</label>
+        <select id="fieldSelect"></select>
+        <span id="phenoSummary" class="muted"></span>
+      </div>
+      <div class="cam-picker" role="radiogroup" aria-label="Trailcam" id="camPicker"></div>
+    </div>
+    <div id="fieldTimeline" class="chart"></div>
+  </section>
+
+  <section class="viewer" id="viewer">
+    <article class="pane" id="trailPane">
+      <div class="pane-head">
+        <div>
+          <span class="pane-kind">Trailcam · Across</span>
+          <strong id="trailTitle">—</strong>
+        </div>
+        <a id="trailFull" class="ext" target="_blank" rel="noopener">Full size ↗</a>
+      </div>
+      <div class="imgbox" id="trailBox" tabindex="0"><img id="trailImg" alt="" draggable="false"><div class="empty"></div><div class="spinner"></div><div class="fs-caption" id="trailCaption"></div></div>
+      <div class="notice" id="trailNotice" hidden></div>
+      <div class="nav">
+        <button data-act="day-1" title="Same time, previous day (Shift+←)">« Day</button>
+        <button data-act="frame-1" title="Previous frame (←)">‹ Frame</button>
+        <div class="chips" id="timeChips" aria-label="Frames on this date"></div>
+        <button data-act="frame+1" title="Next frame (→)">Frame ›</button>
+        <button data-act="day+1" title="Same time, next day (Shift+→)">Day »</button>
+      </div>
+    </article>
+
+    <article class="pane" id="phonePane">
+      <div class="pane-head">
+        <div>
+          <span class="pane-kind">Mobile phone</span>
+          <strong id="phoneTitle">—</strong>
+        </div>
+        <a id="phoneFull" class="ext" target="_blank" rel="noopener">Full size ↗</a>
+      </div>
+      <div class="imgbox" id="phoneBox" tabindex="0"><img id="phoneImg" alt="" draggable="false"><div class="empty"></div><div class="spinner"></div><div class="fs-caption" id="phoneCaption"></div></div>
+      <div class="notice" id="matchInfo"></div>
+      <div class="nav">
+        <button data-act="visit-1" title="Previous phone visit ([)">« Visit</button>
+        <button data-act="photo-1" title="Previous photo (,)">‹ Photo</button>
+        <span class="muted" id="photoCount"></span>
+        <button data-act="photo+1" title="Next photo (.)">Photo ›</button>
+        <button data-act="visit+1" title="Next phone visit (])">Visit »</button>
+      </div>
+    </article>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 id="stripTitle">Phone photos</h2>
+      <div class="visits" id="visitChips"></div>
+    </div>
+    <div class="strip" id="strip"></div>
+  </section>
+
+  <p class="keys muted">Zoom: scroll or pinch on a photo, drag to pan, double-click to zoom/fit, 1:1 for actual pixels, the corner-brackets button (or f) for full screen (arrow keys still work there). Keys: ← → frame · Shift+← → same time on adjacent day · , . phone photo · [ ] phone visit. Times are local (EDT). Dashed markers and “~” are approximate dates (red in the spreadsheet).</p>
+</main>
+
+<div class="tooltip" id="tooltip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
