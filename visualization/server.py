@@ -1,13 +1,16 @@
 """Local web server for the trailcam / phone phenology viewer.
 
     python3 server.py [--port 8000] [--host 127.0.0.1] [--rebuild]
+                      [--annotations ../annotated_images]
 
 Serves the static app, the image index (built on first start), and resized
 JPEG previews of the raw images. Previews are cached under ./cache; raw_data
-is only ever read.
+is only ever read. Boxes drawn in the Annotate tab are written as a YOLO
+dataset to the annotations folder (see annotations.py).
 """
 import argparse
 import hashlib
+import json
 import mimetypes
 import os
 import subprocess
@@ -19,11 +22,15 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageOps
 
+from annotations import Store
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = os.path.realpath(os.path.join(HERE, "..", "raw_data"))
 STATIC = os.path.join(HERE, "static")
 INDEX = os.path.join(HERE, "data", "index.json")
 CACHE = os.path.join(HERE, "cache")
+ANNOTATIONS = os.path.join(HERE, "..", "annotated_images")
+STORE = None  # annotations.Store, set in main()
 
 MAX_W = 4096
 _locks = {}
@@ -99,6 +106,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_file(preview(path, width), "image/jpeg")
             except Exception as e:
                 return self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+        if url.path == "/api/annotations":
+            return self.send_json(STORE.snapshot())
         if url.path == "/raw":
             path = safe_raw_path(q.get("p", [""])[0])
             if not path:
@@ -107,8 +116,45 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_file(path, ctype)
         return super().do_GET()
 
+    def do_POST(self):
+        url = urlparse(self.path)
+        # JSON only: a cross-site form post can't send this content type.
+        if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+            return self.send_json({"error": "expected application/json"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > 4_000_000:
+                return self.send_json({"error": "request too large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            body = json.loads(self.rfile.read(n) or b"{}")
+            if url.path == "/api/annotations":
+                source = os.path.normpath(str(body.get("source") or "")).replace(os.sep, "/")
+                path = safe_raw_path(source)
+                if not path:
+                    return self.send_json({"error": f"no such image: {source}"}, HTTPStatus.NOT_FOUND)
+                rec = STORE.save(source, path, body.get("status"), body.get("boxes"))
+                return self.send_json({"record": rec})
+            if url.path == "/api/classes":
+                return self.send_json({"classes": STORE.set_classes(body.get("classes"))})
+        except (ValueError, TypeError) as e:  # includes bad JSON
+            return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+        except OSError as e:
+            return self.send_json({"error": f"could not write annotations: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+        return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+
+    def send_json(self, obj, status=HTTPStatus.OK):
+        data = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def end_headers(self):
-        if urlparse(self.path).path in ("/", "/index.html", "/app.js", "/style.css"):
+        if urlparse(self.path).path in ("/", "/index.html", "/app.js", "/annotate.js", "/style.css"):
             self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
@@ -134,12 +180,18 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--rebuild", action="store_true", help="rescan raw_data before starting")
+    ap.add_argument("--annotations", default=ANNOTATIONS, metavar="DIR",
+                    help="folder for the YOLO annotations (default: annotated_images in the project root)")
     args = ap.parse_args()
+    global STORE
+    STORE = Store(args.annotations, os.path.join(HERE, "..", "raw_data"))
+    STORE.write_dataset(STORE.classes())  # creates the folder with an empty dataset
     if args.rebuild or not os.path.exists(INDEX):
         build_index()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     srv.daemon_threads = True
     print(f"Phenology viewer: http://{args.host}:{args.port}/  (Ctrl+C to stop)")
+    print(f"Annotations are saved to {STORE.root}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

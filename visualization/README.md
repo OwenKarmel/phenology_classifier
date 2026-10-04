@@ -9,9 +9,11 @@ photos, with phenology timelines (onset of bloom, bloom, fruit set) for every fi
 .venv/bin/python visualization/server.py                  # http://127.0.0.1:8000/
 ```
 
-Options: `--port 8000`, `--host 0.0.0.0` (to open it from another machine), and
-`--rebuild` (rescan `raw_data` after adding images). You can also rebuild the
-index on its own with `python visualization/build_index.py`.
+Options: `--port 8000`, `--host 0.0.0.0` (to open it from another machine; anyone
+who can reach it can also edit the annotations), `--rebuild` (rescan `raw_data`
+after adding images) and `--annotations DIR` (default `annotated_images` in the
+project root). You can also rebuild the index on its own with
+`python visualization/build_index.py`.
 
 `raw_data` is only read. Image previews are generated on demand and cached in
 `visualization/cache/` (safe to delete at any time).

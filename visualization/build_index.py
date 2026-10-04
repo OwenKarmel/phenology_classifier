@@ -7,6 +7,8 @@ Collects:
     folder date when EXIF has been stripped) and, where the folder or file
     name says so, the trailcam they were taken at.
   * Phenology dates from Pheno_2025_from_mobilephone.xlsx.
+  * Every trailcam folder of timestamped frames (Across, Flower, onpost, ...)
+    for the Annotate tab.
 
 Usage: python3 build_index.py
 """
@@ -22,7 +24,8 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = os.path.normpath(os.path.join(HERE, "..", "raw_data"))
-TRAIL_ROOT = os.path.join(RAW, "Raw_Data", "2025")
+TRAIL_BASE = os.path.join(RAW, "Raw_Data")
+TRAIL_ROOT = os.path.join(TRAIL_BASE, "2025")
 PHONE_ROOT = os.path.join(RAW, "Mobile_Phone_Images_2025", "Phone_images")
 PHENO_XLSX = os.path.join(RAW, "Pheno_2025_from_mobilephone.xlsx")
 OUT = os.path.join(HERE, "data", "index.json")
@@ -64,6 +67,53 @@ def scan_trailcams():
                 })
         fields[field] = cams
     return fields
+
+
+# Views in the order the Annotate tab lists them; frames left directly in a
+# camera folder (view "") go last.
+VIEW_ORDER = {"across": 0, "flower": 1, "onpost": 2}
+
+
+def trailcam_folder_info(rel_dir):
+    """(year, field, camera, view) of a folder Raw_Data/<year>/<field>/[CameraN/][<view>].
+
+    Fields with a single camera have no CameraN folder; they count as Camera1.
+    """
+    parts = rel_dir.replace(os.sep, "/").split("/")[1:]
+    year, field, rest = parts[0], parts[1], parts[2:]
+    cam = "Camera1"
+    if rest and re.match(r"(?i)camera\s*\d+$", rest[0]):
+        cam, rest = rest[0], rest[1:]
+    return year, field, cam, "/".join(rest)
+
+
+def scan_trailcam_views():
+    """Every folder of timestamped trailcam frames, of every year and view."""
+    out = []
+    if not os.path.isdir(TRAIL_BASE):
+        return out
+    for dp, dns, fns in os.walk(TRAIL_BASE):
+        dns.sort(key=natural_key)
+        rel = os.path.relpath(dp, RAW)
+        names = sorted(f for f in fns if TS_RE.match(f))
+        parts = rel.split(os.sep)
+        if not names or len(parts) < 3 or not re.match(r"^\d{4}$", parts[1]):
+            continue
+        year, field, cam, view = trailcam_folder_info(rel)
+        out.append({
+            "year": year,
+            "field": field,
+            "camera": cam,
+            "cameraLabel": re.sub(r"(?i)camera\s*", "Camera ", cam),
+            "view": view,
+            "dir": rel.replace(os.sep, "/"),
+            # ".jpg" is implied; any other extension is kept.
+            "frames": [f[:-4] if f.endswith(".jpg") else f for f in names],
+        })
+    out.sort(key=lambda s: (s["year"], s["field"].lower(), natural_key(s["camera"]),
+                            VIEW_ORDER.get(s["view"].lower(), 9 if s["view"] else 10),
+                            s["view"].lower()))
+    return out
 
 
 # ------------------------------------------------------------------- phone
@@ -242,6 +292,7 @@ def natural_key(s):
 
 def main():
     trail = scan_trailcams()
+    views = scan_trailcam_views()
     phone = scan_phone()
     pheno, pheno_labels, pheno_note = read_pheno()
 
@@ -267,6 +318,7 @@ def main():
         "phenoLabels": pheno_labels,
         "phenoNote": pheno_note,
         "fields": fields,
+        "trailcams": views,
     }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as fh:
@@ -275,7 +327,9 @@ def main():
     n_cams = sum(len(f["cameras"]) for f in fields)
     print(f"wrote {OUT}: {len(fields)} fields, {n_cams} Across cameras, "
           f"{n_frames} frames, {len(phone)} phone photos "
-          f"({sum(1 for p in phone if p['time'] is None)} without capture time)")
+          f"({sum(1 for p in phone if p['time'] is None)} without capture time), "
+          f"{len(views)} trailcam folders for annotation "
+          f"({sum(len(v['frames']) for v in views)} frames)")
 
 
 if __name__ == "__main__":
