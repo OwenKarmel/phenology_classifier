@@ -42,7 +42,10 @@ project root). You can also rebuild the index on its own with
 
 The **Annotate** tab works like Label Studio's image bounding-box editor, on
 every trailcam folder (`Across`, `Flower`, `onpost`, …), not just `Across`.
-Pick the field, camera and view at the top. The **Annotate** link above a
+Pick the field, camera and view at the top. By default only `Across` views from
+Jun 11 (onset of prebloom) to the end of Jul 15, 2025 (the last phone photo
+visit) are offered; tick **Show all data** for every view and date. Opening a
+frame outside that range by link turns it on. The **Annotate** link above a
 trailcam frame in the Viewer opens that frame.
 
 - **Draw** by dragging on the photo. Click a box to select it, then drag it or

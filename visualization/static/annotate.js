@@ -22,6 +22,9 @@ const Annot = (() => {
     empty: { label: "No clusters", color: "var(--ann-empty)" },
     skipped: { label: "Skipped", color: "var(--ann-skipped)" },
   };
+  // Unless "Show all data" is ticked: Across views only, from onset of prebloom
+  // to the end of the day of the last phone photo visit.
+  const FOCUS = { view: "Across", start: "2025-06-11", end: "2025-07-15" };
   const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
   const CURSORS = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
   const GRAB = 7; // px around a handle or edge that grabs it
@@ -34,7 +37,7 @@ const Annot = (() => {
     recs: new Map(), // frame path -> record (status "done" | "skipped", YOLO boxes)
     boxes: [], sel: null, hover: null, uid: 0,
     cls: 0, tool: "rect", hideAll: false, space: false,
-    filter: "all", dayOnly: true,
+    filter: "all", dayOnly: true, showAll: false,
     hist: new Map(), clip: null,
     ready: false, drag: null, press: null, cursor: null,
     dirty: new Set(), failed: new Map(), saving: 0, saveTimer: 0, chain: Promise.resolve(),
@@ -89,14 +92,23 @@ const Annot = (() => {
     }));
   }
 
-  // Frame of `s` nearest in time to `min`, daytime if possible.
+  // Which frames and camera views are on offer (daytime / "Show all data").
+  const inRange = (f) => A.showAll || (f.date >= FOCUS.start && f.date <= FOCUS.end);
+  const shown = (f) => inRange(f) && (!A.dayOnly || !f.night);
+  const srcShown = (s) => A.showAll || (s.view === FOCUS.view && s.frames.some(inRange));
+  const visible = () => A.sources.filter(srcShown);
+  const focusText = () => `${FOCUS.view} views, ${fmtDay(FOCUS.start)} – ${fmtDay(FOCUS.end)}`;
+
+  // Frame of `s` nearest in time to `min`: a shown frame if possible, else one in range.
   function nearestIdx(s, min) {
-    let best = -1;
-    s.frames.forEach((f, i) => {
-      if (A.dayOnly && f.night) return;
-      if (best < 0 || Math.abs(f.min - min) < Math.abs(s.frames[best].min - min)) best = i;
-    });
-    return best < 0 ? (s.frames.length ? 0 : -1) : best;
+    for (const ok of [shown, inRange, () => true]) {
+      let best = -1;
+      s.frames.forEach((f, i) => {
+        if (ok(f) && (best < 0 || Math.abs(f.min - min) < Math.abs(s.frames[best].min - min))) best = i;
+      });
+      if (best >= 0) return best;
+    }
+    return -1;
   }
 
   // -------------------------------------------------------------- start
@@ -125,23 +137,65 @@ const Annot = (() => {
   async function show(path) {
     await (A.starting ||= start());
     if (TAB !== "annotate") return;
-    if (path && openPath(path)) return;
+    if (path && openPath(path, true)) return;
     if (path) toast("That frame isn't in the trailcam index.");
     if (A.src) { render(true); writeHash(); return; }
     const vf = frame(); // where the Viewer tab is
-    if (vf && openPath(vf.path)) return;
-    const s = A.sources[0];
+    if (vf && openPath(vf.path, false)) return;
+    const s = visible()[0];
     if (s) openFrame(s, nearestIdx(s, s.frames[0].min));
     else render(false);
   }
 
-  function openPath(path) {
+  // Open a frame by path. A frame outside the default selection turns on
+  // "Show all data" when it was asked for (link, reload), or else gives way to
+  // the nearest frame of this camera that is in the selection.
+  function openPath(path, explicit) {
     const dir = path.slice(0, path.lastIndexOf("/"));
     const s = A.sources.find((x) => x.dir === dir);
     const fi = s ? s.frames.findIndex((f) => f.path === path) : -1;
     if (fi < 0) return false;
-    openFrame(s, fi);
+    if (srcShown(s) && inRange(s.frames[fi])) {
+      openFrame(s, fi);
+    } else if (explicit) {
+      setShowAll(true);
+      openFrame(s, fi);
+      toast(`This frame is outside ${focusText()}, so "Show all data" is on.`);
+    } else {
+      const t = closestSource(s);
+      if (!t) return false;
+      openFrame(t, nearestIdx(t, s.frames[fi].min));
+    }
     return true;
+  }
+
+  // The shown source most like `s`: same camera, else same field, else any.
+  function closestSource(s) {
+    if (srcShown(s)) return s;
+    const vis = visible();
+    return vis.find((x) => fieldKey(x) === fieldKey(s) && x.camera === s.camera) || vis.find((x) => fieldKey(x) === fieldKey(s)) || vis[0] || null;
+  }
+
+  function setShowAll(on) {
+    A.showAll = on;
+    $("annAll").checked = on;
+  }
+
+  // After a filter checkbox changes: stay put if possible, else move to the
+  // nearest frame that is still shown.
+  function rescope() {
+    if (!A.src) return;
+    const f = aFrame(), s = closestSource(A.src);
+    if (!s) {
+      A.list = listOf(A.src);
+      renderAxis();
+      refresh();
+      return toast(`No trailcam frames in ${focusText()}.`);
+    }
+    if (s !== A.src || !inRange(f)) return openFrame(s, nearestIdx(s, f.min));
+    A.list = listOf(s);
+    renderAxis();
+    refresh();
   }
 
   function openFrame(s, fi) {
@@ -152,7 +206,7 @@ const Annot = (() => {
     A.ready = A.ready && ZOOM.annBox.path === f.path;
     A.src = s;
     A.fi = fi;
-    if (!same) A.list = listOf(s);
+    A.list = listOf(s);
     A.boxes = (A.recs.get(f.path)?.boxes || []).map(fromYolo);
     A.sel = A.hover = A.drag = A.press = null;
     render(same);
@@ -160,7 +214,7 @@ const Annot = (() => {
     preload();
   }
 
-  const listOf = (s) => s.frames.map((_, i) => i).filter((i) => !A.dayOnly || !s.frames[i].night);
+  const listOf = (s) => s.frames.map((_, i) => i).filter((i) => shown(s.frames[i]));
 
   function switchSource(s) {
     if (!s || s === A.src) return;
@@ -174,7 +228,7 @@ const Annot = (() => {
     if (!f) return;
     const fr = A.src.frames;
     for (let i = A.fi + dir; i >= 0 && i < fr.length; i += dir) {
-      if (A.dayOnly && fr[i].night) continue;
+      if (!shown(fr[i])) continue;
       if (matches(fr[i].path, filter)) return openFrame(A.src, i);
     }
     const what = filter === "all" ? "" : FILTERS.find((x) => x.key === filter).label.toLowerCase() + " ";
@@ -189,6 +243,7 @@ const Annot = (() => {
     let best = -1;
     const day = (i) => Math.floor(A.src.frames[i].min / DAY);
     for (let i = A.fi + dir; i >= 0 && i < A.src.frames.length; i += dir) {
+      if (!inRange(A.src.frames[i])) break; // frames are in time order
       if (day(i) === day(A.fi)) continue;
       if (best >= 0 && day(i) !== day(best)) break;
       const d = Math.abs((A.src.frames[i].min % DAY) - tod);
@@ -203,7 +258,7 @@ const Annot = (() => {
     const fr = A.src.frames;
     for (const dir of [1, -1]) {
       for (let i = A.fi + dir, n = 0; i >= 0 && i < fr.length && n < 2; i += dir) {
-        if ((A.dayOnly && fr[i].night) || !matches(fr[i].path, A.filter)) continue;
+        if (!shown(fr[i]) || !matches(fr[i].path, A.filter)) continue;
         new Image().src = imgUrl(fr[i].path, w);
         n++;
       }
@@ -492,9 +547,10 @@ const Annot = (() => {
 
   function renderSources() {
     const sel = $("annField");
-    const years = new Set(A.sources.map((s) => s.year));
-    const keys = [...new Set(A.sources.map(fieldKey))];
-    if (sel.options.length !== keys.length) {
+    const vis = visible();
+    const years = new Set(vis.map((s) => s.year));
+    const keys = [...new Set(vis.map(fieldKey))];
+    if ([...sel.options].map((o) => o.value).join() !== keys.join()) {
       sel.replaceChildren(...keys.map((k) => {
         const [year, f] = k.split("/");
         return el("option", { value: k }, f.replace(/_/g, " ") + (years.size > 1 ? ` · ${year}` : ""));
@@ -506,7 +562,7 @@ const Annot = (() => {
     if (!A.src) return;
     sel.value = fieldKey(A.src);
     const done = countsByDir();
-    const inField = A.sources.filter((s) => fieldKey(s) === fieldKey(A.src));
+    const inField = vis.filter((s) => fieldKey(s) === fieldKey(A.src));
     const chip = (label, on, n, title, onclick) => {
       const b = el("button", { type: "button", role: "radio", "aria-checked": String(on), title }, label);
       if (n) b.append(el("span", { class: "count" }, String(n)));
@@ -539,7 +595,8 @@ const Annot = (() => {
       $("annKind").textContent = "Trailcam";
       $("annTitle").textContent = "—";
       full.setAttribute("aria-disabled", "true");
-      setImage("annBox", "annImg", null, A.sources.length ? "No frame selected." : "No trailcam frames found under raw_data/Raw_Data.");
+      setImage("annBox", "annImg", null, !A.sources.length ? "No trailcam frames found under raw_data/Raw_Data."
+        : visible().length ? "No frame selected." : `No trailcam frames in ${focusText()}. Tick "Show all data".`);
       return;
     }
     $("annKind").textContent = srcName(s);
@@ -1053,17 +1110,12 @@ const Annot = (() => {
 
     $("annField").onchange = (e) => {
       const key = e.target.value;
-      const inField = A.sources.filter((s) => fieldKey(s) === key);
+      const inField = visible().filter((s) => fieldKey(s) === key);
       switchSource(inField.find((s) => s.camera === A.src?.camera && s.view === A.src?.view) || inField.find((s) => s.view === A.src?.view) || inField[0]);
       e.target.blur();
     };
-    $("annDay").onchange = (e) => {
-      A.dayOnly = e.target.checked;
-      if (!A.src) return;
-      A.list = listOf(A.src);
-      renderAxis();
-      refresh();
-    };
+    $("annDay").onchange = (e) => { A.dayOnly = e.target.checked; rescope(); };
+    $("annAll").onchange = (e) => { A.showAll = e.target.checked; rescope(); };
     $("annPrev").onclick = () => step(-1);
     $("annNext").onclick = () => step(1);
     $("annSubmit").onclick = submit;
