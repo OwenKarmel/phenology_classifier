@@ -3,7 +3,8 @@
 Side-by-side viewer for the 2025 **Across** trailcam frames and the mobile phone
 photos, with phenology timelines (onset of bloom, bloom, fruit set) for every field.
 The **Annotate** tab draws grape-cluster bounding boxes on trailcam frames and
-saves them as a YOLO dataset in `annotated_images/`.
+saves them as a YOLO dataset in `annotated_images/`. The **Model** tab shows the
+live log of a YOLO training run (see "YOLO Model Training" in the project README).
 
 ```bash
 # from the project root
@@ -13,8 +14,9 @@ saves them as a YOLO dataset in `annotated_images/`.
 
 Options: `--port 8000`, `--host 0.0.0.0` (to open it from another machine; anyone
 who can reach it can also edit the annotations), `--rebuild` (rescan `raw_data`
-after adding images) and `--annotations DIR` (default `annotated_images` in the
-project root). You can also rebuild the index on its own with
+after adding images), `--annotations DIR` (default `annotated_images` in the
+project root) and `--model-logs DIR` (training logs for the Model tab, default
+`yolo/logs`). You can also rebuild the index on its own with
 `python visualization/build_index.py`.
 
 `raw_data` is only read. Image previews are generated on demand and cached in

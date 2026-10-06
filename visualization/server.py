@@ -1,21 +1,24 @@
 """Local web server for the trailcam / phone phenology viewer.
 
     python3 server.py [--port 8000] [--host 127.0.0.1] [--rebuild]
-                      [--annotations ../annotated_images]
+                      [--annotations ../annotated_images] [--model-logs ../yolo/logs]
 
 Serves the static app, the image index (built on first start), and resized
 JPEG previews of the raw images. Previews are cached under ./cache; raw_data
 is only ever read. Boxes drawn in the Annotate tab are written as a YOLO
-dataset to the annotations folder (see annotations.py).
+dataset to the annotations folder (see annotations.py). The Model tab shows
+the logs that yolo/pipeline.py writes to yolo/logs/ (read only).
 """
 import argparse
 import hashlib
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 import threading
+import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -31,6 +34,10 @@ INDEX = os.path.join(HERE, "data", "index.json")
 CACHE = os.path.join(HERE, "cache")
 ANNOTATIONS = os.path.join(HERE, "..", "annotated_images")
 STORE = None  # annotations.Store, set in main()
+MODEL_LOGS = os.path.join(HERE, "..", "yolo", "logs")
+LOG_NAME = re.compile(r"^[\w.-]+\.log$")
+LOG_TAIL = 512 * 1024   # a log opens at its last 512 KB
+LOG_CHUNK = 2 * 1024 * 1024
 
 MAX_W = 4096
 _locks = {}
@@ -82,6 +89,79 @@ def preview(path, width):
     return out
 
 
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError, TypeError):
+        return True
+    return True
+
+
+def model_status(log_name):
+    """Status written by yolo/runlog.py next to the log, with "running" checked
+    against the process: a run killed outright never writes its exit."""
+    path = os.path.join(MODEL_LOGS, log_name[:-4] + ".json")
+    try:
+        with open(path) as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        st = {"state": "unknown"}
+    if st.get("state") == "running" and not pid_alive(st.get("pid")):
+        st["state"] = "lost"
+    try:
+        info = os.stat(os.path.join(MODEL_LOGS, log_name))
+        st.update(size=info.st_size, modified=info.st_mtime)
+    except OSError:
+        pass
+    st["name"] = log_name
+    return st
+
+
+def model_runs():
+    try:
+        names = sorted((n for n in os.listdir(MODEL_LOGS) if LOG_NAME.match(n)), reverse=True)
+    except FileNotFoundError:
+        names = []
+    return {"dir": os.path.abspath(MODEL_LOGS), "now": time.time(), "runs": [model_status(n) for n in names]}
+
+
+def utf8_prefix(data):
+    """`data` without a UTF-8 character cut off at its end."""
+    for i in range(1, min(4, len(data)) + 1):
+        b = data[-i]
+        if b & 0xC0 == 0x80:  # continuation byte: look further back
+            continue
+        if b >= 0xC0:  # lead byte of the last i bytes
+            need = 2 if b < 0xE0 else 3 if b < 0xF0 else 4
+            return data if i >= need else data[:-i]
+        return data  # ASCII
+    return data
+
+
+def model_log(name, offset):
+    """Text of one log from byte `offset` (negative: its last LOG_TAIL bytes)."""
+    if not LOG_NAME.match(name or ""):
+        raise ValueError("bad log name")
+    path = os.path.join(MODEL_LOGS, name)
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        start = max(0, size - LOG_TAIL) if offset < 0 else min(offset, size)
+        fh.seek(start)
+        data = fh.read(LOG_CHUNK)
+    skipped = 0
+    if offset < 0 and start > 0:  # start at a whole line
+        nl = data.find(b"\n")
+        skipped = start + nl + 1 if nl >= 0 else start
+        data = data[nl + 1:] if nl >= 0 else data
+        start = skipped
+    data = utf8_prefix(data)
+    return {"name": name, "offset": start, "next": start + len(data), "size": size,
+            "skipped": skipped, "text": data.decode("utf-8", "replace"), "status": model_status(name),
+            "now": time.time()}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=STATIC, **kw)
@@ -108,6 +188,15 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
         if url.path == "/api/annotations":
             return self.send_json(STORE.snapshot())
+        if url.path == "/api/model/runs":
+            return self.send_json(model_runs())
+        if url.path == "/api/model/log":
+            try:
+                return self.send_json(model_log(q.get("name", [""])[0], int(q.get("offset", ["-1"])[0])))
+            except ValueError as e:
+                return self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+            except FileNotFoundError:
+                return self.send_json({"error": "no such log"}, HTTPStatus.NOT_FOUND)
         if url.path == "/raw":
             path = safe_raw_path(q.get("p", [""])[0])
             if not path:
@@ -154,7 +243,7 @@ class Handler(SimpleHTTPRequestHandler):
             pass
 
     def end_headers(self):
-        if urlparse(self.path).path in ("/", "/index.html", "/app.js", "/annotate.js", "/style.css"):
+        if urlparse(self.path).path in ("/", "/index.html", "/app.js", "/annotate.js", "/model.js", "/style.css"):
             self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
@@ -176,14 +265,17 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main():
+    global STORE, MODEL_LOGS
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--rebuild", action="store_true", help="rescan raw_data before starting")
     ap.add_argument("--annotations", default=ANNOTATIONS, metavar="DIR",
                     help="folder for the YOLO annotations (default: annotated_images in the project root)")
+    ap.add_argument("--model-logs", default=MODEL_LOGS, metavar="DIR",
+                    help="training logs shown in the Model tab (default: yolo/logs in the project root)")
     args = ap.parse_args()
-    global STORE
+    MODEL_LOGS = args.model_logs
     STORE = Store(args.annotations, os.path.join(HERE, "..", "raw_data"))
     STORE.write_dataset(STORE.classes())  # creates the folder with an empty dataset
     if args.rebuild or not os.path.exists(INDEX):

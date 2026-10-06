@@ -1077,13 +1077,15 @@ let TAB = "viewer";
 const SUBTITLES = {
   viewer: "Across trailcams beside mobile phone photos, matched by date and time of day · 2025",
   annotate: "Draw boxes around grape clusters on trailcam frames · saved as a YOLO dataset in annotated_images/",
+  model: "Live log of the grape-cluster YOLO training runs started with yolo/pipeline.py",
 };
 
-// `path`: a trailcam frame to open in the Annotate tab.
+// `path`: a trailcam frame to open in the Annotate tab, or a log to open in the Model tab.
 function setTab(name, path) {
   TAB = name;
   $("viewerMain").hidden = name !== "viewer";
   $("annotateMain").hidden = name !== "annotate";
+  $("modelMain").hidden = name !== "model";
   document.querySelectorAll(".viewer-only").forEach((n) => { n.hidden = name !== "viewer"; });
   document.querySelectorAll(".tabs [role=tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   $("subtitle").textContent = SUBTITLES[name];
@@ -1094,8 +1096,10 @@ function setTab(name, path) {
   host.append($("fieldCard"), $("overviewCard"));
   hideTip();
   if (document.fullscreenElement) document.exitFullscreen();
+  if (name !== "model") ModelTab.hide();
   if (name === "viewer") { writeHash(); renderCharts(); }
-  else Annot.show(path);
+  else if (name === "annotate") Annot.show(path);
+  else ModelTab.show(path);
 }
 
 // Viewer "Show all data": swap every field's cameras between all views and
@@ -1220,9 +1224,9 @@ async function init() {
   }
   FIELDS = prepare(IDX);
   const q = new URLSearchParams(location.hash.slice(1));
-  if (q.get("tab") === "annotate") {
+  if (q.get("tab") === "annotate" || q.get("tab") === "model") {
     selectField(defaultField().id);
-    setTab("annotate", q.get("src"));
+    setTab(q.get("tab"), q.get(q.get("tab") === "annotate" ? "src" : "run"));
   } else if (!readHash()) {
     selectField(defaultField().id);
   }

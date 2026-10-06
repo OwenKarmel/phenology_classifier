@@ -15,6 +15,7 @@
   <nav class="tabs" role="tablist" aria-label="Mode">
     <button role="tab" data-tab="viewer" aria-selected="true" aria-controls="viewerMain">Viewer</button>
     <button role="tab" data-tab="annotate" aria-selected="false" aria-controls="annotateMain">Annotate</button>
+    <button role="tab" data-tab="model" aria-selected="false" aria-controls="modelMain">Model</button>
   </nav>
   <div class="toggles viewer-only">
     <label><input type="checkbox" id="skipNight" checked> Skip night frames</label>
@@ -211,8 +212,36 @@
   <div class="charts" id="annotateCharts"></div>
 </main>
 
+<main id="modelMain" hidden>
+  <section class="card model-bar" id="modelHead" hidden>
+    <div class="model-run">
+      <label for="modelRun" class="visually-hidden">Training run</label>
+      <select id="modelRun" class="field-select"></select>
+      <span class="pill" id="modelPill"></span>
+    </div>
+    <label class="check"><input type="checkbox" id="modelFollow" checked> Follow output</label>
+    <p class="muted model-meta" id="modelMeta"></p>
+  </section>
+
+  <p class="notice warn" id="modelError" hidden></p>
+
+  <section class="card model-empty" id="modelEmpty" hidden>
+    <h2>No training runs yet</h2>
+    <p class="muted">Start one on the server, from the project folder:</p>
+    <pre class="cmd">yolo/.venv/bin/python yolo/pipeline.py train</pre>
+    <p class="muted">Its log appears here as soon as it starts. Logs are read from <code id="modelDir"></code>.
+      The commands are described in the project README under “YOLO Model Training”.</p>
+  </section>
+
+  <section class="card model-log-card" id="modelLogCard" hidden>
+    <p class="muted model-skipped" id="modelSkipped" hidden></p>
+    <pre class="model-log" id="modelLog" tabindex="0" aria-label="Training log" aria-live="off"></pre>
+  </section>
+</main>
+
 <div class="tooltip" id="tooltip" hidden></div>
 <script src="app.js"></script>
 <script src="annotate.js"></script>
+<script src="model.js"></script>
 </body>
 </html>
