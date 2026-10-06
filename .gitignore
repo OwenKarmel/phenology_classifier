@@ -17,3 +17,6 @@ visualization/data/
 .venv/
 __pycache__/
 *.pyc
+
+# Misc
+Train_YOLO_Models.ipynb
