@@ -13,6 +13,10 @@ annotated_images/
 visualization/cache/
 visualization/data/
 
+# YOLO training: yolo/.venv links to the env on /data; logs are read by the Model tab
+yolo/.venv
+yolo/logs/
+
 # Python
 .venv/
 __pycache__/

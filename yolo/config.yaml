@@ -1,0 +1,95 @@
+# Grape-cluster detector (Ultralytics YOLO26): the data split, the data.yaml
+# files and every training / evaluation / inference parameter.
+#
+#   yolo/.venv/bin/python yolo/pipeline.py --help
+#
+# Any value can also be overridden for one command with --set, e.g.
+#   --set train.epochs=10 model.imgsz=1280 experiment=quick_test
+# Relative paths are relative to the project root.
+
+experiment: yolo26l_2560      # run name: outputs go to <paths.output>/runs/<experiment>/
+
+paths:
+  annotations: annotated_images                  # the viewer's Annotate tab dataset (annotations.json)
+  raw_data: raw_data                             # annotations.json `source` paths are relative to this
+  output: /data/owen/phenology_classifier/yolo   # weights/, runs/, image_cache/ (/home is full)
+
+# ------------------------------------------------------------------- split
+# Cameras are "<field>/<camera>" as in the Annotate tab (CAC/Camera1 ...) and
+# cover every year. Only the cameras listed here are used: an annotated camera
+# that is in neither list is left out (`prepare` lists it as unassigned).
+split:
+  views: [Across]          # use only annotations from these camera views
+  test:                    # held out: never trained on, never used to choose anything
+    - CAC/Camera1
+  cross_validation:        # leave-one-camera-out: each camera is one fold's validation set;
+    - CAC/Camera2          # the final model then trains on all of them
+    - FRC/Camera1
+    - LR/Camera1
+
+# --------------------------------------------------------------- data.yaml
+# One data.yaml per fold, plus final.yaml (train on every CV camera, test on
+# the test cameras), all written by `prepare` under runs/<experiment>/data/.
+data:
+  names: [grape_cluster]   # the model's classes (data.yaml `names`); class id = position
+  class_map:               # annotation label (classes.txt) -> model class; null drops those boxes.
+    grape_cluster: grape_cluster
+    AI_grape_cluster: grape_cluster
+
+# ------------------------------------------------------------------- model
+# Chosen for a ~4 h `train` (3 folds + final + test) on one RTX 5000 Ada, from
+# `bench` (s per epoch on the 170-frame fold -> epochs that fit in 4 h):
+#   yolo26l 2560 batch 2: 39 s -> 92    yolo26l 3200 batch 1: 70 s -> 51
+#   yolo26x 2560 batch 1: 62 s -> 58    yolo26m 3200 batch 1: 53 s -> 68
+# 2560 is the largest size where yolo26l still fits 2 images (25 of 32 GB).
+model:
+  weights: yolo26l.pt      # starting checkpoint: yolo26n/s/m/l/x.pt (COCO-pretrained, pulled into <output>/weights)
+  imgsz: 2560              # train, validation, test and inference size in px (long side; frames are 9216x5184).
+                           # Frames are shrunk once to this size with area interpolation (`prepare`), and so
+                           # are the images given to `predict`.
+
+# ---------------------------------------------------------------- training
+# Passed to Ultralytics model.train() for every CV fold and the final model;
+# any train setting works here: https://docs.ultralytics.com/modes/train/#train-settings
+# (data, imgsz, project and name are set by the pipeline).
+train:
+  epochs: 90               # `train` ~3.9 h (bench: 39 s/epoch on the largest fold; final alone ~1.05 h)
+  batch: 2                 # 3+ runs out of GPU memory at 2560
+  device: 1                # GPU index (both GPUs are RTX 5000 Ada, 32 GB)
+  workers: 12
+  cache: ram               # keep the shrunken frames in RAM (~3 GB at 2560)
+  patience: 0              # no early stopping: every fold trains the full `epochs`
+  optimizer: auto          # AdamW, lr0 0.002 for runs this size (Ultralytics' choice for < 10k iterations)
+  cos_lr: false
+  close_mosaic: 10         # turn mosaic off for the last 10 epochs
+  amp: true
+  seed: 0
+  deterministic: false     # true slows training and warns with cache: ram
+  plots: true
+  # Augmentation (Ultralytics defaults, listed so they are easy to change)
+  mosaic: 1.0
+  scale: 0.5
+  fliplr: 0.5
+  flipud: 0.0
+  degrees: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+
+# -------------------------------------------------------------- evaluation
+# Passed to model.val() for each fold's held-out camera and for the test set.
+evaluate:
+  batch: 4
+  conf: 0.001              # mAP needs the full precision-recall curve
+  iou: 0.7
+  max_det: 300
+  plots: true
+
+# --------------------------------------------------------------- inference
+# Passed to model.predict() for the test images (`test`) and for `predict`.
+predict:
+  batch: 4
+  conf: 0.25               # keep detections at or above this confidence
+  iou: 0.7
+  max_det: 300
+  line_width: 3
