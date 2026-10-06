@@ -22,13 +22,22 @@ project root). You can also rebuild the index on its own with
 
 ## Using it
 
-- **All fields**: one timeline per field showing the stage bands, phone visits
-  (dots) and trailcam coverage (grey line). Click a row to open that field at that date.
-- **Field timeline**: full stage labels, phone visits, and one row per Across
-  camera. Click a camera row or use the buttons to choose the camera.
+From the top: the photos, the phone photo strip, the field timeline, then the
+all-fields timeline.
+
+- **Show all data** (unticked by default): only `Across` views and only dates
+  from Jun 11 (onset of prebloom) to the end of Jul 15, 2025 (the last phone
+  photo visit) are shown: frames, phone photos, visits and the timelines'
+  date range. Tick it for every view (`Across`, `Flower`, …) and the whole
+  season; the camera buttons then list each camera's views. A link to a frame
+  or photo outside that range turns it on.
 - **Viewer**: the trailcam frame (left) is matched to the phone photo (right)
   by **same date and nearest capture time**, and the time difference is shown.
   Stepping trailcam frames brings up the phone photos for that date.
+- **Field timeline**: full stage labels, phone visits, and one row per trailcam
+  camera (view). Click a camera row or use the buttons to choose the camera.
+- **All fields**: one timeline per field showing the stage bands, phone visits
+  (dots) and trailcam coverage (grey line). Click a row to open that field at that date.
 - **Zoom**: scroll or pinch to zoom, drag to pan, double-click to zoom or fit,
   `1:1` for actual pixels, and the corner-brackets button (or `f`) for full
   screen. When the preview runs out of resolution, the original file is loaded.
@@ -44,8 +53,11 @@ The **Annotate** tab works like Label Studio's image bounding-box editor, on
 every trailcam folder (`Across`, `Flower`, `onpost`, …), not just `Across`.
 Pick the field, camera and view at the top. By default only `Across` views from
 Jun 11 (onset of prebloom) to the end of Jul 15, 2025 (the last phone photo
-visit) are offered; tick **Show all data** for every view and date. Opening a
-frame outside that range by link turns it on. The **Annotate** link above a
+visit) are offered; tick **Show all data** for every view and date (this box is
+separate from the Viewer's). Opening a frame outside that range by link turns
+it on. The field and all-fields timelines sit under the photo and follow the
+frame being annotated, in the same date range; click them to jump to a camera,
+field or date. The **Annotate** link above a
 trailcam frame in the Viewer opens that frame.
 
 - **Draw** by dragging on the photo. Click a box to select it, then drag it or
@@ -129,8 +141,7 @@ the real images instead of the links), then fix `path:` in `dataset.yaml`.
   have the wrong year (e.g. `11-6-2027`). These are all read as day-month 2025
   (onset = Jun 11, or Jun 12 for HC). Dates in red text in the sheet are shown
   as approximate (dashed marker, "~").
-- The Viewer only uses `Across` folders. `TB_Niagara/Camera3/New folder` and the
-  `Flower`/`onpost` folders are not shown there; the Annotate tab lists every
-  folder of timestamped frames, with frames loose in a camera folder as
-  "Unsorted". Frames between 21:00 and 05:00 count as night frames ("Skip night
+- Both tabs list every folder of timestamped frames once "Show all data" is
+  ticked (`Flower`, `onpost`, `TB_Niagara/Camera3/New folder`, …), with frames
+  loose in a camera folder as "Unsorted"; unticked, only `Across`. Frames between 21:00 and 05:00 count as night frames ("Skip night
   frames", "Daytime only").

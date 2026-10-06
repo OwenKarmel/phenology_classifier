@@ -22,9 +22,6 @@ const Annot = (() => {
     empty: { label: "No clusters", color: "var(--ann-empty)" },
     skipped: { label: "Skipped", color: "var(--ann-skipped)" },
   };
-  // Unless "Show all data" is ticked: Across views only, from onset of prebloom
-  // to the end of the day of the last phone photo visit.
-  const FOCUS = { view: "Across", start: "2025-06-11", end: "2025-07-15" };
   const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
   const CURSORS = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
   const GRAB = 7; // px around a handle or edge that grabs it
@@ -97,7 +94,6 @@ const Annot = (() => {
   const shown = (f) => inRange(f) && (!A.dayOnly || !f.night);
   const srcShown = (s) => A.showAll || (s.view === FOCUS.view && s.frames.some(inRange));
   const visible = () => A.sources.filter(srcShown);
-  const focusText = () => `${FOCUS.view} views, ${fmtDay(FOCUS.start)} – ${fmtDay(FOCUS.end)}`;
 
   // Frame of `s` nearest in time to `min`: a shown frame if possible, else one in range.
   function nearestIdx(s, min) {
@@ -196,6 +192,7 @@ const Annot = (() => {
     A.list = listOf(s);
     renderAxis();
     refresh();
+    renderCharts();
   }
 
   function openFrame(s, fi) {
@@ -302,6 +299,7 @@ const Annot = (() => {
     else A.recs.set(path, { ...(old || { source: path }), status, boxes: A.boxes.map(toYolo) });
     queueSave(path);
     refresh();
+    renderCharts(); // the timelines colour frames by status
   }
 
   function restore(snap) {
@@ -524,6 +522,7 @@ const Annot = (() => {
     renderAxis();
     drawScrub();
     drawOverlay();
+    renderCharts();
   }
 
   // After an edit or selection change (same image).
@@ -1158,5 +1157,34 @@ const Annot = (() => {
     A.toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
   }
 
-  return { show };
+  // ------------------------------------------------------------- charts
+  // What the shared field / all-fields charts show while this tab is open.
+  function chartCtx() {
+    const f = aFrame();
+    const field = f && FIELDS.find((x) => x.id === A.src.field && String(IDX.year) === A.src.year);
+    if (!field) return null;
+    return {
+      all: A.showAll, field, at: f.min, date: f.date,
+      cam: camsOf(field, A.showAll).find((c) => c.dir === A.src.dir) || null,
+      pick: pickFromChart,
+      status: statusOf, dayOnly: A.dayOnly, // frames coloured like the frame bar
+    };
+  }
+
+  // A click on a chart: open that camera view (or the closest one in that
+  // field) at the clicked date, keeping the time of day.
+  function pickFromChart({ field, cam, date }) {
+    const cur = aFrame();
+    let s = cam && A.sources.find((x) => x.dir === cam.dir);
+    if (!s && field.id !== A.src.field) {
+      const inField = visible().filter((x) => x.field === field.id && x.year === String(IDX.year));
+      s = inField.find((x) => x.camera === A.src.camera && x.view === A.src.view) || inField.find((x) => x.view === A.src.view) || inField[0];
+      if (!s) return toast(`${field.id.replace(/_/g, " ")} has no trailcam frames${A.showAll ? "" : ` in ${focusText()}`}.`);
+    }
+    s ||= A.src;
+    const t = date ? isoDay(date) * DAY + (cur.min % DAY) : cur.min;
+    openFrame(s, nearestIdx(s, t));
+  }
+
+  return { show, chartCtx };
 })();

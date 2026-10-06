@@ -98,6 +98,10 @@ h2 { font-size: 15px; margin: 0; }
 .toggles label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
 main { max-width: 1680px; margin: 0 auto; padding: 0 16px 24px; display: grid; gap: 12px; }
+.charts { display: grid; gap: 12px; min-width: 0; }
+.charts:empty { display: none; }
+.scope-note { font-size: 12px; }
+#fieldName { margin: 0; font-size: 18px; }
 
 .card, .pane {
   background: var(--surface);
@@ -156,6 +160,16 @@ button:focus-visible, select:focus-visible, .thumb:focus-visible { outline: 2px 
 .chart .visit.sel { fill: var(--surface); stroke: var(--ink); stroke-width: 2.5; }
 .chart .cov { fill: var(--coverage); }
 .chart .cov.sel { fill: var(--coverage-sel); }
+.chart .fs { shape-rendering: crispEdges; }
+.fs-labeled { fill: var(--ann-labeled); }
+.fs-empty { fill: var(--ann-empty); }
+.fs-skipped { fill: var(--ann-skipped); }
+.fs-unlabeled { fill: var(--ann-unlabeled); }
+.legend i.fs-key { height: 8px; border-radius: 2px; }
+.legend i.fs-labeled { background: var(--ann-labeled); }
+.legend i.fs-empty { background: var(--ann-empty); }
+.legend i.fs-skipped { background: var(--ann-skipped); }
+.legend i.fs-unlabeled { background: var(--ann-unlabeled); }
 .chart .none { fill: var(--muted); font-style: italic; }
 
 .viewer { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

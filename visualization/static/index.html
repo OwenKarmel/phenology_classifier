@@ -18,36 +18,17 @@
   </nav>
   <div class="toggles viewer-only">
     <label><input type="checkbox" id="skipNight" checked> Skip night frames</label>
+    <label title="Unticked: only Across views, Jun 11 (onset of prebloom) – Jul 15, 2025 (last phone photo visit)"><input type="checkbox" id="showAll"> Show all data</label>
     <label><input type="checkbox" id="taggedOnly"> Only phone photos tagged to this camera</label>
   </div>
 </header>
 
 <main id="viewerMain">
-  <section class="card" id="overviewCard">
-    <div class="card-head">
-      <h2>All fields</h2>
-      <div class="legend" id="legend"></div>
-    </div>
-    <div id="overview" class="chart"></div>
-  </section>
-
-  <section class="card" id="fieldCard">
-    <div class="card-head">
-      <div class="field-title">
-        <label for="fieldSelect" class="visually-hidden">Field</label>
-        <select id="fieldSelect"></select>
-        <span id="phenoSummary" class="muted"></span>
-      </div>
-      <div class="cam-picker" role="radiogroup" aria-label="Trailcam" id="camPicker"></div>
-    </div>
-    <div id="fieldTimeline" class="chart"></div>
-  </section>
-
   <section class="viewer" id="viewer">
     <article class="pane" id="trailPane">
       <div class="pane-head">
         <div>
-          <span class="pane-kind">Trailcam · Across</span>
+          <span class="pane-kind" id="trailKind">Trailcam · Across</span>
           <strong id="trailTitle">—</strong>
         </div>
         <span class="head-links">
@@ -93,6 +74,33 @@
     </div>
     <div class="strip" id="strip"></div>
   </section>
+
+  <div class="charts" id="viewerCharts">
+  <section class="card" id="fieldCard">
+    <div class="card-head">
+      <div class="field-title">
+        <label for="fieldSelect" class="visually-hidden">Field</label>
+        <select id="fieldSelect" class="viewer-only"></select>
+        <h2 id="fieldName" class="annotate-only" hidden></h2>
+        <span id="phenoSummary" class="muted"></span>
+      </div>
+      <div class="cam-picker viewer-only" role="radiogroup" aria-label="Trailcam" id="camPicker"></div>
+    </div>
+    <div id="fieldTimeline" class="chart"></div>
+  </section>
+
+  <section class="card" id="overviewCard">
+    <div class="card-head">
+      <div>
+        <h2>All fields</h2>
+        <span class="muted scope-note" id="overviewScope"></span>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div id="overview" class="chart"></div>
+  </section>
+
+  </div>
 
   <p class="keys muted">Zoom: scroll or pinch on a photo, drag to pan, double-click to zoom/fit, 1:1 for actual pixels, the corner-brackets button (or f) for full screen (arrow keys still work there). Keys: ← → frame · Shift+← → same time on adjacent day · , . phone photo · [ ] phone visit. Times are local (EDT). Dashed markers and “~” are approximate dates (red in the spreadsheet).</p>
 </main>
@@ -200,6 +208,7 @@
       </details>
     </aside>
   </div>
+  <div class="charts" id="annotateCharts"></div>
 </main>
 
 <div class="tooltip" id="tooltip" hidden></div>

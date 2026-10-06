@@ -45,28 +45,70 @@ const rawUrl = (path) => `/raw?p=${encodeURIComponent(path)}`;
 let IDX = null;
 let FIELDS = [];
 const S = { field: null, cam: null, fi: -1, pi: -1, date: null, match: null };
-const opts = { skipNight: true, taggedOnly: false };
+const opts = { skipNight: true, taggedOnly: false, showAll: false };
+
+// With "Show all data" unticked (both tabs): Across views only, from onset of
+// prebloom to the end of the day of the last phone photo visit.
+const FOCUS = { view: "Across", start: "2025-06-11", end: "2025-07-15" };
+const inFocus = (date) => !!date && date >= FOCUS.start && date <= FOCUS.end;
+const focusText = () => `${FOCUS.view} views, ${fmtDay(FOCUS.start)} – ${fmtDay(FOCUS.end)}`;
+
+// One camera view (folder) of a field. Across views keep the plain camera id
+// ("Camera1"), so links and phone-photo tags still match; other views get
+// "Camera1/Flower". Only frames on dates passing `keep` are included.
+function makeCam(s, keep, withView) {
+  const view = s.view || "Unsorted";
+  const c = {
+    id: s.view === FOCUS.view ? s.camera : `${s.camera}/${view}`,
+    cam: s.camera, view, dir: s.dir, byDate: {}, frames: [],
+    label: s.cameraLabel + (withView ? ` · ${view}` : ""),
+  };
+  for (const n of s.frames) {
+    const file = n.includes(".") ? n : n + ".jpg";
+    const date = `${file.slice(0, 4)}-${file.slice(4, 6)}-${file.slice(6, 8)}`;
+    if (!keep(date)) continue;
+    const hour = +file.slice(9, 11);
+    (c.byDate[date] ||= []).push(c.frames.length);
+    c.frames.push({ ts: file.replace(/\.[^.]+$/, ""), date, min: isoDay(date) * DAY + hour * 60 + +file.slice(11, 13),
+      night: hour < 5 || hour >= 21, path: `${s.dir}/${file}` });
+  }
+  c.days = Object.keys(c.byDate).map(isoDay);
+  return c;
+}
+
+const coverage = (cams) => [...new Set(cams.flatMap((c) => c.days))].sort((a, b) => a - b);
 
 function prepare(idx) {
+  const year = String(idx.year);
+  const days = [];
   for (const f of idx.fields) {
-    for (const c of f.cameras) {
-      c.byDate = {};
-      c.frames = c.frames.map((ts, i) => {
-        const date = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
-        const hour = +ts.slice(9, 11);
-        const min = isoDay(date) * DAY + hour * 60 + +ts.slice(11, 13);
-        (c.byDate[date] ||= []).push(i);
-        return { ts, date, min, night: hour < 5 || hour >= 21, path: `${c.dir}/${ts}.jpg` };
-      });
-      c.days = Object.keys(c.byDate).map(isoDay);
-    }
+    // Index from before the Annotate tab: only the Across cameras are listed.
+    const srcs = idx.trailcams ? idx.trailcams.filter((s) => s.year === year && s.field === f.id)
+      : f.cameras.map((c) => ({ camera: c.id, cameraLabel: c.label, view: FOCUS.view, dir: c.dir, frames: c.frames }));
+    f.allCams = srcs.map((s) => makeCam(s, () => true, true));
+    f.focusCams = srcs.filter((s) => s.view === FOCUS.view).map((s) => makeCam(s, inFocus, false)).filter((c) => c.frames.length);
+    f.allCoverage = coverage(f.allCams);
+    f.focusCoverage = coverage(f.focusCams);
     f.photos.forEach((p, i) => {
       p.i = i;
       p.min = p.date && p.time ? isoDay(p.date) * DAY + +p.time.slice(0, 2) * 60 + +p.time.slice(3, 5) : null;
+      if (p.date) days.push(isoDay(p.date));
     });
-    f.coverageDays = [...new Set(f.cameras.flatMap((c) => c.days))].sort((a, b) => a - b);
+    days.push(...f.allCoverage);
   }
+  if (days.length) idx.range = { start: dayIso(Math.min(...days)), end: dayIso(Math.max(...days)) };
+  scopeFields(idx.fields, opts.showAll);
   return idx.fields;
+}
+
+// The Viewer's cameras for its "Show all data" setting.
+const camsOf = (f, all) => (all ? f.allCams : f.focusCams);
+const visitsShown = (p, all) => all || inFocus(p.date);
+function scopeFields(fields, all) {
+  for (const f of fields) {
+    f.cameras = camsOf(f, all);
+    f.coverageDays = all ? f.allCoverage : f.focusCoverage;
+  }
 }
 
 const field = () => S.field;
@@ -76,7 +118,7 @@ const photo = () => (S.pi >= 0 ? S.field.photos[S.pi] : null);
 const camNum = (id) => (id || "").replace(/\D/g, "");
 
 function photoVisible(p) {
-  return !opts.taggedOnly || (S.cam && p.camera === S.cam.id);
+  return visitsShown(p, opts.showAll) && (!opts.taggedOnly || (S.cam && p.camera === S.cam.cam));
 }
 function photosOn(date) {
   const list = S.field.photos.filter((p) => (date === "undated" ? !p.date : p.date === date) && photoVisible(p));
@@ -125,7 +167,7 @@ function selectField(id, { camId, date } = {}) {
   S.fi = -1; S.pi = -1; S.match = null;
   if (!date) {
     const visits = visitDates().filter((d) => d !== "undated");
-    date = visits.find((d) => S.cam && S.cam.byDate[d]) || visits[0] || (S.cam && S.cam.frames[0]?.date) || IDX.range.start;
+    date = visits.find((d) => S.cam && S.cam.byDate[d]) || visits[0] || (S.cam && S.cam.frames[0]?.date) || (opts.showAll ? IDX.range.start : FOCUS.start);
   }
   selectDate(date);
 }
@@ -162,7 +204,7 @@ function selectDate(date) {
   const list = photosOn(date);
   if (list.length) {
     // Prefer a photo tagged to this camera, else the first of the visit.
-    const tagged = list.find((p) => S.cam && p.camera === S.cam.id);
+    const tagged = list.find((p) => S.cam && p.camera === S.cam.cam);
     return selectPhoto((tagged || list[0]).i);
   }
   S.pi = -1; S.match = null; S.date = date;
@@ -185,7 +227,7 @@ function selectFrame(fi) {
   if (!p || p.date !== f.date) {
     const list = photosOn(f.date);
     if (list.length) {
-      const tagged = list.filter((q) => q.camera === c.id);
+      const tagged = list.filter((q) => q.camera === c.cam);
       const pool = tagged.length ? tagged : list;
       const best = pool.reduce((b, q) => (q.min !== null && (b.min === null || Math.abs(q.min - f.min) < Math.abs(b.min - f.min)) ? q : b), pool[0]);
       S.pi = best.i;
@@ -252,8 +294,7 @@ function render() {
   renderTrail();
   renderPhone();
   renderStrip();
-  renderOverview();
-  renderFieldTimeline();
+  renderCharts();
   writeHash();
   preload();
 }
@@ -274,17 +315,10 @@ function renderFieldHeader() {
     for (const f of FIELDS) sel.append(el("option", { value: f.id }, f.id.replace(/_/g, " ")));
   }
   sel.value = S.field.id;
-  const ph = S.field.pheno;
-  const parts = [];
-  for (const s of STAGES) {
-    const v = ph && ph[s.key];
-    if (v) parts.push(`${s.label} ${v.approx ? "~" : ""}${fmtDay(v.date)}`);
-  }
-  $("phenoSummary").textContent = parts.length ? parts.join(" · ") : "No phenology dates recorded";
 
   const picker = $("camPicker");
   picker.replaceChildren();
-  if (!S.field.cameras.length) picker.append(el("span", { class: "muted" }, "No Across trailcam in this field"));
+  if (!S.field.cameras.length) picker.append(el("span", { class: "muted" }, opts.showAll ? "No trailcam in this field" : `No trailcam frames in ${focusText()}`));
   for (const c of S.field.cameras) {
     const b = el("button", { role: "radio", "aria-checked": String(c === S.cam), title: `${c.frames.length} frames, ${fmtDay(c.frames[0].date)} – ${fmtDay(c.frames.at(-1).date)}` }, c.label);
     b.onclick = () => selectCamera(c.id);
@@ -509,9 +543,11 @@ function renderTrail() {
   $("trailCaption").textContent = c && f ? `${S.field.id.replace(/_/g, " ")} · ${c.label} · ${fmtDay(f.date, true)} ${fmtHM(f.min)}  —  ← → frame, Shift+← → day, Esc to exit` : "";
   const full = $("trailFull");
   $("trailAnnotate").toggleAttribute("disabled", !f);
+  $("trailKind").textContent = `Trailcam · ${c ? c.view : opts.showAll ? "all views" : FOCUS.view}`;
   if (!c) {
     $("trailTitle").textContent = S.field.id.replace(/_/g, " ");
-    setImage("trailBox", "trailImg", null, "This field has no Across trailcam images.");
+    setImage("trailBox", "trailImg", null, opts.showAll ? "This field has no trailcam images."
+      : `This field has no trailcam frames in ${focusText()}. Tick "Show all data" to see the rest.`);
     full.setAttribute("aria-disabled", "true");
     $("trailNotice").hidden = true;
     $("timeChips").replaceChildren();
@@ -624,9 +660,11 @@ function renderPhone() {
   }
   if (line.childNodes.length) info.append(line);
 
-  if (p.camera && c && p.camera !== c.id && S.field.cameras.some((x) => x.id === p.camera)) {
-    const b = el("button", {}, `Switch to ${p.camera.replace(/camera/i, "Camera ")}`);
-    b.onclick = () => selectCamera(p.camera);
+  const tagCam = p.camera && c && p.camera !== c.cam &&
+    (S.field.cameras.find((x) => x.cam === p.camera && x.view === c.view) || S.field.cameras.find((x) => x.cam === p.camera));
+  if (tagCam) {
+    const b = el("button", {}, `Switch to ${tagCam.label}`);
+    b.onclick = () => selectCamera(tagCam.id);
     const l2 = el("div", {}, `This photo was taken at ${p.camera.replace(/camera/i, "Camera ")}. `);
     l2.append(b);
     info.append(l2);
@@ -664,23 +702,69 @@ function renderStrip() {
 }
 
 // ---------------------------------------------------------------- charts
-function scaleX(width, left, right) {
-  const d0 = isoDay(IDX.range.start) - 1, d1 = isoDay(IDX.range.end) + 2;
+// The charts follow the Viewer, or the Annotate tab while it is open. A chart
+// context says which field, camera and moment to mark, whether all data or only
+// the focus range is shown, and what a click on the chart should open.
+function chartCtx() {
+  const a = TAB === "annotate" ? Annot.chartCtx() : null;
+  if (a) return a;
+  const f = frame();
+  return {
+    all: opts.showAll, field: S.field, cam: S.cam,
+    at: f ? f.min : S.date && S.date !== "undated" ? (isoDay(S.date) + 0.5) * DAY : null,
+    date: S.date,
+    pick({ field: fl, cam, date }) {
+      if (fl !== S.field) return selectField(fl.id, { date });
+      if (cam && cam !== S.cam) {
+        if (!date) return selectCamera(cam.id);
+        S.cam = cam;
+      }
+      if (date) selectDate(date);
+    },
+  };
+}
+
+function renderCharts() {
+  if (!S.field) return;
+  const ctx = chartCtx();
+  renderFieldName(ctx);
+  renderOverview(ctx);
+  renderFieldTimeline(ctx);
+}
+
+function renderFieldName(ctx) {
+  const ph = ctx.field.pheno;
+  const parts = [];
+  for (const s of STAGES) {
+    const v = ph && ph[s.key];
+    if (v) parts.push(`${s.label} ${v.approx ? "~" : ""}${fmtDay(v.date)}`);
+  }
+  $("phenoSummary").textContent = parts.length ? parts.join(" · ") : "No phenology dates recorded";
+  $("fieldName").textContent = ctx.field.id.replace(/_/g, " ");
+  $("overviewScope").textContent = ctx.all ? "" : `${focusText()} · tick "Show all data" for the whole season`;
+}
+
+function scaleX(width, left, right, all) {
+  const r = all ? IDX.range : FOCUS;
+  const d0 = isoDay(r.start) - 1, d1 = isoDay(r.end) + 2;
   const k = (width - left - right) / (d1 - d0);
   return { x: (day) => left + (day - d0) * k, day: (x) => Math.floor((x - left) / k + d0), k, d0, d1, left, right: width - right };
 }
 
 function drawAxis(svg, sc, y, y2) {
+  // Wide days (the focus range): label every day or every other day.
+  const step = sc.k >= 34 ? 1 : sc.k >= 17 ? 2 : 0;
   for (let d = Math.ceil(sc.d0); d < sc.d1; d++) {
     const date = new Date(d * 864e5);
     const dom = date.getUTCDate();
-    if (dom === 1 || dom === 8 || dom === 15 || dom === 22) {
-      const x = sc.x(d);
-      svg.append(el("svg:line", { x1: x, x2: x, y1: y + 6, y2, class: "grid" }));
-      if (dom === 1 || sc.k * 7 > 34) {
-        svg.append(el("svg:text", { x: x + 3, y: y + 2, class: "axis-label", "font-weight": dom === 1 ? 600 : 400 },
-          dom === 1 ? MONTHS[date.getUTCMonth()] : String(dom)));
-      }
+    const weekly = dom === 1 || dom === 8 || dom === 15 || dom === 22;
+    const label = step ? dom === 1 || ((dom - 1) % step === 0 && dom < 30) : weekly && (dom === 1 || sc.k * 7 > 34);
+    if (!weekly && !label) continue;
+    const x = sc.x(d);
+    if (weekly) svg.append(el("svg:line", { x1: x, x2: x, y1: y + 6, y2, class: "grid" }));
+    if (label) {
+      svg.append(el("svg:text", { x: x + 3, y: y + 2, class: "axis-label", "font-weight": dom === 1 ? 600 : 400 },
+        dom === 1 ? MONTHS[date.getUTCMonth()] : String(dom)));
     }
   }
 }
@@ -722,7 +806,8 @@ function drawStages(svg, sc, f, y, h, { labels, labelRows } = {}) {
   return true;
 }
 
-function svgDefs(svg) {
+// Gradients, plus a clip path so nothing is drawn left of the row labels.
+function svgDefs(svg, id, sc, H) {
   const defs = el("svg:defs");
   for (const s of STAGES) {
     const g = el("svg:linearGradient", { id: `fade-${s.key}`, x1: 0, x2: 1, y1: 0, y2: 0 });
@@ -730,84 +815,120 @@ function svgDefs(svg) {
     g.append(el("svg:stop", { offset: 1, "stop-color": s.color, "stop-opacity": 0 }));
     defs.append(g);
   }
+  const clip = el("svg:clipPath", { id: `${id}-plot` });
+  clip.append(el("svg:rect", { x: sc.left, y: 0, width: sc.right - sc.left, height: H }));
+  defs.append(clip);
   svg.append(defs);
+  return `url(#${id}-plot)`;
 }
 
-function drawCursor(svg, sc, y0, y1) {
-  const f = frame();
-  let x = null;
-  if (f) x = sc.x(f.min / DAY);
-  else if (S.date && S.date !== "undated") x = sc.x(isoDay(S.date) + 0.5);
-  if (x === null) return;
+function drawCursor(svg, sc, ctx, y0, y1) {
+  if (ctx.at === null) return;
+  const x = sc.x(ctx.at / DAY);
   svg.append(el("svg:line", { x1: x, x2: x, y1: y0, y2: y1, class: "cursor" }));
   svg.append(el("svg:path", { d: `M${x - 5},${y0 - 6} L${x + 5},${y0 - 6} L${x},${y0} Z`, class: "cursor-head" }));
 }
 
-function visitsOf(f) {
+// Annotate tab: frames as segments coloured by annotation status, like the
+// frame bar under the photo. Frames come every 6 h, so each 6 h slot is one
+// segment; where several cameras share a slot (the all-fields rows), it is
+// split in proportion to their statuses.
+const FRAME_STATUSES = ["labeled", "empty", "skipped", "unlabeled"];
+const SLOT = 360; // minutes
+
+function drawFrameStatus(g, sc, ctx, cams, y, h) {
+  const slots = new Map();
+  for (const c of cams) {
+    for (const f of c.frames) {
+      if (ctx.dayOnly && f.night) continue;
+      const k = Math.floor(f.min / SLOT);
+      if (!slots.has(k)) slots.set(k, { labeled: 0, empty: 0, skipped: 0, unlabeled: 0, n: 0 });
+      const n = slots.get(k);
+      n[ctx.status(f.path)]++;
+      n.n++;
+    }
+  }
+  const w = (sc.k * SLOT) / DAY, width = w >= 4 ? w - 1 : w; // a 1 px gap once there is room
+  for (const [k, n] of slots) {
+    let x = sc.x((k * SLOT) / DAY);
+    for (const st of FRAME_STATUSES) {
+      if (!n[st]) continue;
+      const ww = (width * n[st]) / n.n;
+      g.append(el("svg:rect", { x, y, width: ww, height: h, class: `fs fs-${st}` }));
+      x += ww;
+    }
+  }
+}
+
+function visitsOf(f, all) {
   const m = new Map();
-  for (const p of f.photos) if (p.date) m.set(p.date, (m.get(p.date) || 0) + 1);
+  for (const p of f.photos) if (p.date && visitsShown(p, all)) m.set(p.date, (m.get(p.date) || 0) + 1);
   return m;
 }
 
-function renderOverview() {
+function renderOverview(ctx) {
   const host = $("overview");
   const W = host.clientWidth || 800;
   const narrow = W < 640;
   const left = narrow ? 92 : 132, rowH = 30, top = 26;
   const H = top + FIELDS.length * rowH + 4;
-  const sc = scaleX(W, left, 10);
+  const sc = scaleX(W, left, 10, ctx.all);
   const svg = el("svg:svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Phenology timelines for all fields" });
-  svgDefs(svg);
+  const clip = svgDefs(svg, "ov", sc, H);
   drawAxis(svg, sc, 12, H);
 
   FIELDS.forEach((f, r) => {
     const y = top + r * rowH;
-    const sel = f === S.field;
+    const sel = f === ctx.field;
     if (sel) svg.append(el("svg:rect", { x: 0, y, width: W, height: rowH, class: "row-sel", rx: 6 }));
-    const hit = el("svg:rect", { x: 0, y, width: W, height: rowH, class: "row-hit", rx: 6, "data-row": r });
-    svg.append(hit);
+    svg.append(el("svg:rect", { x: 0, y, width: W, height: rowH, class: "row-hit", rx: 6, "data-row": r }));
     svg.append(el("svg:text", { x: 8, y: y + rowH / 2 + 4, class: "row-label" + (sel ? " sel" : ""), "pointer-events": "none" }, f.id.replace(/_/g, " ")));
-    for (const [a, b] of runs(f.coverageDays)) {
-      svg.append(el("svg:rect", { x: sc.x(a), y: y + rowH - 6, width: Math.max(1, sc.x(b + 1) - sc.x(a)), height: 3, rx: 1.5, class: "cov" + (sel ? " sel" : ""), "pointer-events": "none" }));
+    const g = el("svg:g", { "pointer-events": "none", "clip-path": clip });
+    if (ctx.status) drawFrameStatus(g, sc, ctx, camsOf(f, ctx.all), y + rowH - 7, 4);
+    else {
+      for (const [a, b] of runs(ctx.all ? f.allCoverage : f.focusCoverage)) {
+        g.append(el("svg:rect", { x: sc.x(a), y: y + rowH - 6, width: Math.max(1, sc.x(b + 1) - sc.x(a)), height: 3, rx: 1.5, class: "cov" + (sel ? " sel" : "") }));
+      }
     }
-    const g = el("svg:g", { "pointer-events": "none" });
     const has = drawStages(g, sc, f, y + 4, 14, { labels: "inside" });
+    const visits = visitsOf(f, ctx.all);
+    for (const [d] of visits) {
+      g.append(el("svg:circle", { cx: sc.x(isoDay(d) + 0.5), cy: y + rowH - 4.5, r: 4.5, class: "visit" + (sel && d === ctx.date ? " sel" : "") }));
+    }
     svg.append(g);
-    if (!has && !f.cameras.length && !f.photos.length) {
-      svg.append(el("svg:text", { x: left + 6, y: y + rowH / 2 + 4, class: "none", "pointer-events": "none" }, "No Across trailcam, phone photos or phenology dates"));
+    const anyCam = camsOf(f, ctx.all).length;
+    if (!has && !anyCam && !visits.size) {
+      svg.append(el("svg:text", { x: left + 6, y: y + rowH / 2 + 4, class: "none", "pointer-events": "none" },
+        ctx.all ? "No trailcam, phone photos or phenology dates" : "No Across frames, phone photos or phenology dates in this range"));
     } else if (!has && !narrow) {
       svg.append(el("svg:text", { x: left + 6, y: y + 17, class: "none", "pointer-events": "none" }, "No phenology dates"));
     }
-    for (const [d] of visitsOf(f)) {
-      svg.append(el("svg:circle", { cx: sc.x(isoDay(d) + 0.5), cy: y + rowH - 4.5, r: 4.5, class: "visit" + (sel && d === S.date ? " sel" : ""), "pointer-events": "none" }));
-    }
   });
-  const selRow = FIELDS.indexOf(S.field);
-  drawCursor(svg, sc, top + selRow * rowH + 2, top + selRow * rowH + rowH - 2);
+  const selRow = FIELDS.indexOf(ctx.field);
+  drawCursor(svg, sc, ctx, top + selRow * rowH + 2, top + selRow * rowH + rowH - 2);
 
   svg.addEventListener("click", (e) => {
     const { x, row } = locate(e, svg, top, rowH, FIELDS.length);
     if (row < 0) return;
     const f = FIELDS[row];
     const day = sc.day(x);
-    const date = x >= left && day >= sc.d0 ? nearestDateFor(f, day) : undefined;
-    selectField(f.id, { camId: f === S.field ? S.cam?.id : undefined, date });
+    const date = x >= left && day >= sc.d0 ? nearestDateFor(f, day, ctx.all) : undefined;
+    if (f !== ctx.field || date) ctx.pick({ field: f, date });
   });
   svg.addEventListener("mousemove", (e) => {
     const { x, row } = locate(e, svg, top, rowH, FIELDS.length);
     if (row < 0 || x < left) return hideTip();
-    const f = FIELDS[row];
-    showTip(e, tipFor(f, dayIso(sc.day(x)), null));
+    showTip(e, tipFor(FIELDS[row], dayIso(sc.day(x)), null, ctx.all));
   });
   svg.addEventListener("mouseleave", hideTip);
   host.replaceChildren(svg);
-  renderLegend();
+  renderLegend(ctx);
 }
 
 // Clicking a field row: snap to a phone visit within 2 days, else the clicked day.
-function nearestDateFor(f, day) {
+function nearestDateFor(f, day, all) {
   let best = null;
-  for (const [d] of visitsOf(f)) {
+  for (const [d] of visitsOf(f, all)) {
     const dd = Math.abs(isoDay(d) - day);
     if (dd <= 2 && (!best || dd < best[1])) best = [d, dd];
   }
@@ -823,7 +944,7 @@ function locate(e, svg, top, rowH, n) {
   return { x, y, row: row >= 0 && row < n ? row : -1 };
 }
 
-function tipFor(f, iso, c) {
+function tipFor(f, iso, c, all) {
   const wrap = el("div");
   wrap.append(el("div", { class: "t-head" }, `${f.id.replace(/_/g, " ")} · ${fmtDay(iso, true)}`));
   const st = stageOn(f, iso);
@@ -835,56 +956,64 @@ function tipFor(f, iso, c) {
   };
   if (st) row(st.color, `${st.label} (from ${st.approx ? "~" : ""}${fmtDay(st.date)})`);
   else if (f.pheno && STAGES.some((s) => f.pheno[s.key])) row(null, "Before onset of bloom");
-  const n = f.photos.filter((p) => p.date === iso).length;
+  const n = visitsOf(f, all).get(iso) || 0;
   if (n) row("var(--ink)", `${n} phone photo${n > 1 ? "s" : ""}`);
-  const cams = c ? [c] : f.cameras;
+  const cams = camsOf(f, all);
   const withFrames = cams.filter((x) => x.byDate[iso]);
-  if (c) row(null, withFrames.length ? `${c.label}: ${c.byDate[iso].length} frames` : `${c.label}: no frames`);
-  else if (f.cameras.length) row(null, `${withFrames.length}/${f.cameras.length} trailcams have frames`);
+  if (c) row(null, c.byDate[iso] ? `${c.label}: ${c.byDate[iso].length} frames` : `${c.label}: no frames`);
+  else if (cams.length) row(null, `${withFrames.length}/${cams.length} trailcam${all ? " views" : "s"} have frames`);
   return wrap;
 }
 
-function renderFieldTimeline() {
+function renderFieldTimeline(ctx) {
   const host = $("fieldTimeline");
-  const f = S.field;
+  const f = ctx.field;
   const W = host.clientWidth || 800;
   const narrow = W < 640;
   const left = narrow ? 92 : 132;
-  const sc = scaleX(W, left, 10);
+  const sc = scaleX(W, left, 10, ctx.all);
   const stageH = 64, visitH = 26, camH = 22, top = 22;
-  const rows = [{ kind: "stage", h: stageH }, { kind: "visits", h: visitH }, ...f.cameras.map((c) => ({ kind: "cam", c, h: camH }))];
+  const cams = camsOf(f, ctx.all);
+  const rows = [{ kind: "stage", h: stageH }, { kind: "visits", h: visitH }, ...cams.map((c) => ({ kind: "cam", c, h: camH }))];
   let y = top;
   for (const r of rows) { r.y = y; y += r.h; }
   const H = y + 4;
   const svg = el("svg:svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": `Timeline for ${f.id}` });
-  svgDefs(svg);
+  const clip = svgDefs(svg, "ft", sc, H);
   drawAxis(svg, sc, 10, H);
+  const isSel = (c) => !!ctx.cam && c.id === ctx.cam.id;
 
   for (const r of rows) {
+    const g = el("svg:g", { "pointer-events": "none", "clip-path": clip });
     if (r.kind === "cam") {
-      const sel = r.c === S.cam;
+      const sel = isSel(r.c);
       if (sel) svg.append(el("svg:rect", { x: 0, y: r.y, width: W, height: r.h, class: "row-sel", rx: 5 }));
       svg.append(el("svg:rect", { x: 0, y: r.y, width: W, height: r.h, class: "row-hit", rx: 5 }));
       svg.append(el("svg:text", { x: 8, y: r.y + r.h / 2 + 4, class: "row-label" + (sel ? " sel" : ""), "pointer-events": "none" }, r.c.label));
-      for (const [a, b] of runs(r.c.days)) {
-        svg.append(el("svg:rect", { x: sc.x(a), y: r.y + r.h / 2 - 4, width: Math.max(1.5, sc.x(b + 1) - sc.x(a) - 1), height: 8, rx: 2, class: "cov" + (sel ? " sel" : ""), "pointer-events": "none" }));
+      if (ctx.status) drawFrameStatus(g, sc, ctx, [r.c], r.y + r.h / 2 - 4, 8);
+      else {
+        for (const [a, b] of runs(r.c.days)) {
+          g.append(el("svg:rect", { x: sc.x(a), y: r.y + r.h / 2 - 4, width: Math.max(1.5, sc.x(b + 1) - sc.x(a) - 1), height: 8, rx: 2, class: "cov" + (sel ? " sel" : "") }));
+        }
       }
     } else if (r.kind === "stage") {
       svg.append(el("svg:text", { x: 8, y: r.y + r.h - 10, class: "row-label sub" }, "Phenology"));
-      const g = el("svg:g", { "pointer-events": "none" });
       if (!drawStages(g, sc, f, r.y + r.h - 18, 14, { labels: "stair", labelRows: r.h - 20 })) {
         g.append(el("svg:text", { x: left + 6, y: r.y + r.h - 8, class: "none" }, "No phenology dates recorded for this field"));
       }
-      svg.append(g);
     } else {
       svg.append(el("svg:rect", { x: 0, y: r.y, width: W, height: r.h, class: "row-hit", rx: 5 }));
       svg.append(el("svg:text", { x: 8, y: r.y + r.h / 2 + 4, class: "row-label sub", "pointer-events": "none" }, "Phone visits"));
-      for (const [d] of visitsOf(f)) {
-        svg.append(el("svg:circle", { cx: sc.x(isoDay(d) + 0.5), cy: r.y + r.h / 2, r: 5, class: "visit" + (d === S.date ? " sel" : ""), "pointer-events": "none" }));
+      for (const [d] of visitsOf(f, ctx.all)) {
+        g.append(el("svg:circle", { cx: sc.x(isoDay(d) + 0.5), cy: r.y + r.h / 2, r: 5, class: "visit" + (d === ctx.date ? " sel" : "") }));
       }
     }
+    svg.append(g);
   }
-  drawCursor(svg, sc, rows[0].y + rows[0].h - 22, H - 2);
+  if (!cams.length) {
+    svg.append(el("svg:text", { x: 8, y: H - 2, class: "none" }, ctx.all ? "No trailcam in this field" : `No trailcam frames in ${focusText()}`));
+  }
+  drawCursor(svg, sc, ctx, rows[0].y + rows[0].h - 22, H - 2);
 
   const rowAt = (yy) => rows.find((r) => yy >= r.y && yy < r.y + r.h);
   const pos = (e) => {
@@ -894,28 +1023,27 @@ function renderFieldTimeline() {
   svg.addEventListener("click", (e) => {
     const { x, y } = pos(e);
     const r = rowAt(y);
-    if (!r) return;
-    if (r.kind === "cam" && r.c !== S.cam) {
-      S.cam = r.c;
-      if (x < left) return selectCamera(r.c.id);
-    }
-    if (x < left) return;
+    if (!r || (x < left && r.kind !== "cam")) return;
     const day = sc.day(x);
-    selectDate(r.kind === "visits" ? nearestDateFor(f, day) : dayIso(day));
+    const date = x < left ? undefined : r.kind === "visits" ? nearestDateFor(f, day, ctx.all) : dayIso(day);
+    ctx.pick({ field: f, cam: r.kind === "cam" ? r.c : undefined, date });
   });
   svg.addEventListener("mousemove", (e) => {
     const { x, y } = pos(e);
     const r = rowAt(y);
     if (!r || x < left) return hideTip();
-    showTip(e, tipFor(f, dayIso(sc.day(x)), r.kind === "cam" ? r.c : S.cam));
+    showTip(e, tipFor(f, dayIso(sc.day(x)), r.kind === "cam" ? r.c : ctx.cam, ctx.all));
   });
   svg.addEventListener("mouseleave", hideTip);
   host.replaceChildren(svg);
 }
 
-function renderLegend() {
+function renderLegend(ctx) {
   const lg = $("legend");
-  if (lg.childNodes.length) return;
+  const kind = ctx.status ? "status" : "coverage";
+  if (lg.dataset.kind === kind) return;
+  lg.dataset.kind = kind;
+  lg.replaceChildren();
   for (const s of STAGES) {
     const span = el("span");
     span.append(el("i", { style: `background:${s.color}` }), s.label);
@@ -924,7 +1052,9 @@ function renderLegend() {
   const mk = (cls, text) => { const s = el("span"); s.append(el("i", { class: cls }), text); lg.append(s); };
   mk("dash", "Approximate date");
   mk("dot", "Phone visit");
-  mk("cov", "Trailcam frames");
+  if (!ctx.status) return mk("cov", "Trailcam frames");
+  const names = { labeled: "Labeled", empty: "No clusters", skipped: "Skipped", unlabeled: "Unlabeled" };
+  for (const st of FRAME_STATUSES) mk(`fs-key fs-${st}`, names[st]);
 }
 
 // --------------------------------------------------------------- tooltip
@@ -957,10 +1087,38 @@ function setTab(name, path) {
   document.querySelectorAll(".viewer-only").forEach((n) => { n.hidden = name !== "viewer"; });
   document.querySelectorAll(".tabs [role=tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   $("subtitle").textContent = SUBTITLES[name];
+  document.querySelectorAll(".annotate-only").forEach((n) => { n.hidden = name !== "annotate"; });
+  // The field and all-fields charts are shared: below the photos in the Viewer,
+  // below the drawing area in the Annotate tab.
+  const host = $(name === "viewer" ? "viewerCharts" : "annotateCharts");
+  host.append($("fieldCard"), $("overviewCard"));
   hideTip();
   if (document.fullscreenElement) document.exitFullscreen();
-  if (name === "viewer") writeHash();
+  if (name === "viewer") { writeHash(); renderCharts(); }
   else Annot.show(path);
+}
+
+// Viewer "Show all data": swap every field's cameras between all views and
+// dates and the focus range, then keep the selection as close as possible.
+function setViewerScope(all) {
+  opts.showAll = all;
+  $("showAll").checked = all;
+  scopeFields(FIELDS, all);
+}
+
+function rescopeViewer() {
+  const prevCam = S.cam, prevFrame = frame(), p = photo();
+  setViewerScope(opts.showAll);
+  const cams = S.field.cameras;
+  S.cam = cams.find((c) => c.id === prevCam?.id) || cams.find((c) => c.cam === prevCam?.cam) || cams[0] || null;
+  if (p && photoVisible(p)) return selectPhoto(p.i);
+  if (prevFrame && S.cam) {
+    const fi = nearestFrame(S.cam, prevFrame.min, opts.skipNight);
+    if (fi >= 0) return selectFrame(fi);
+  }
+  S.fi = -1; S.pi = -1;
+  const d = S.date && S.date !== "undated" ? S.date : null;
+  selectDate(opts.showAll || inFocus(d) ? d || FOCUS.start : d < FOCUS.start ? FOCUS.start : FOCUS.end);
 }
 
 // ----------------------------------------------------------- url + misc
@@ -970,6 +1128,7 @@ function writeHash() {
   const q = new URLSearchParams();
   q.set("field", S.field.id);
   if (S.cam) q.set("cam", S.cam.id);
+  if (opts.showAll) q.set("all", "1");
   if (p) q.set("photo", p.path);
   else if (f) q.set("frame", f.ts);
   else if (S.date) q.set("date", S.date);
@@ -980,6 +1139,13 @@ function readHash() {
   const q = new URLSearchParams(location.hash.slice(1));
   const fid = q.get("field");
   if (!fid || !FIELDS.some((f) => f.id === fid)) return false;
+  // A link to something outside the focus range turns "Show all data" on.
+  const f = FIELDS.find((x) => x.id === fid);
+  const ph = f.photos.find((x) => x.path === q.get("photo"));
+  const fr = q.get("frame"), cam = q.get("cam") || "";
+  const outside = (ph && !inFocus(ph.date)) || cam.includes("/") ||
+    (fr && !inFocus(`${fr.slice(0, 4)}-${fr.slice(4, 6)}-${fr.slice(6, 8)}`)) || (q.get("date") && !inFocus(q.get("date")));
+  if (q.get("all") === "1" || outside) setViewerScope(true);
   selectField(fid, { camId: q.get("cam") });
   const p = S.field.photos.find((x) => x.path === q.get("photo"));
   if (p) { selectPhoto(p.i); return true; }
@@ -1006,6 +1172,7 @@ function preload() {
 function bind() {
   $("fieldSelect").onchange = (e) => selectField(e.target.value);
   $("skipNight").onchange = (e) => { opts.skipNight = e.target.checked; render(); };
+  $("showAll").onchange = (e) => { opts.showAll = e.target.checked; rescopeViewer(); };
   $("taggedOnly").onchange = (e) => {
     opts.taggedOnly = e.target.checked;
     const p = photo();
@@ -1024,7 +1191,7 @@ function bind() {
   $("trailAnnotate").onclick = () => { const f = frame(); if (f) setTab("annotate", f.path); };
   document.addEventListener("keydown", (e) => {
     if (TAB !== "viewer") return;
-    if (e.target.closest("select, input, textarea") || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest("select, textarea, input:not([type=checkbox])") || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     if (k === "ArrowLeft" || k === "ArrowRight") {
       const dir = k === "ArrowLeft" ? -1 : 1;
@@ -1037,7 +1204,7 @@ function bind() {
   let raf = 0;
   new ResizeObserver(() => {
     cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => { if (S.field) { renderOverview(); renderFieldTimeline(); } });
+    raf = requestAnimationFrame(renderCharts);
   }).observe($("overview"));
 }
 
